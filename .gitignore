@@ -14,6 +14,9 @@ models/
 input/
 output/
 
+# 운영자 설정(정규화 규칙 - 배포별 상이)
+web/rules.json
+
 # 로그·임시·캡처
 web/_server.log
 web/_server.err

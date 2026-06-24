@@ -74,6 +74,16 @@
   .switch{display:flex;align-items:center;gap:10px;font-size:13px}
   .switch input{width:18px;height:18px;accent-color:var(--accent)}
   .hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5}
+  /* 정규화 규칙 편집 */
+  .rules{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+  .rule{display:flex;align-items:center;gap:6px}
+  .rule input[type=text]{flex:1;min-width:0;background:#0c1220;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit}
+  .rule .arrow{color:var(--muted);flex:none}
+  .rule .r-rx{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);flex:none;white-space:nowrap}
+  .rule .r-rx input{width:15px;height:15px;accent-color:var(--accent2)}
+  .rule .r-del{flex:none;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:6px;width:30px;height:32px;cursor:pointer}
+  .rule .r-del:hover{border-color:var(--accent);color:var(--accent)}
+  .ruleactions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
   /* 버튼 */
   .btn{border:none;border-radius:9px;padding:12px 18px;font-size:14px;font-weight:700;cursor:pointer;color:#fff}
   .btn.primary{background:var(--accent)}
@@ -142,7 +152,16 @@
         </div>
         <div class="opt">
           <label class="switch"><input type="checkbox" id="normalize" checked> 단위·기호 한글 정규화</label>
-          <div class="hint">예: ℃→도, %→퍼센트, m/s→초속 미터, ~→에서. 발음 정확도를 높입니다.</div>
+          <div class="hint">아래 규칙으로 치환해 발음 정확도를 높입니다. 항목을 직접 추가·수정·삭제하세요.</div>
+          <div class="rules" id="rules"></div>
+          <div class="ruleactions">
+            <button class="btn ghost sm" id="addRule" type="button">+ 항목 추가</button>
+            <button class="btn ghost sm" id="previewRule" type="button">미리보기</button>
+            <span style="flex:1"></span>
+            <button class="btn ghost sm" id="resetRules" type="button">기본값 복원</button>
+            <button class="btn primary sm" id="saveRules" type="button">저장</button>
+          </div>
+          <div class="hint" id="rulePreview" style="white-space:pre-wrap"></div>
         </div>
         <div class="opt">
           <label>출력 포맷</label>
@@ -290,8 +309,44 @@ function updateCount(){
 $('text').oninput=updateCount;
 $('clearBtn').onclick=()=>{ $('text').value=''; curDoc=null; $('curdoc').textContent=''; updateCount(); loadDocs(); };
 
-// ---- 옵션 ----
+// ---- 옵션: 말속도 ----
 $('speed').oninput=e=>$('speedval').textContent=(+e.target.value).toFixed(2)+'×';
+
+// ---- 옵션: 정규화 규칙 편집 ----
+function ruleRow(r){
+  const div=document.createElement('div'); div.className='rule';
+  div.innerHTML=`<input type="text" class="r-find" placeholder="찾기 (예: m/s)">
+    <span class="arrow">→</span>
+    <input type="text" class="r-rep" placeholder="바꾸기 (예: 초속 \\1미터)">
+    <label class="r-rx" title="정규식 사용(고급)"><input type="checkbox"> 정규식</label>
+    <button class="r-del" type="button" title="삭제">✕</button>`;
+  div.querySelector('.r-find').value=r.find||'';
+  div.querySelector('.r-rep').value=r.replace||'';
+  div.querySelector('.r-rx input').checked=!!r.regex;
+  div.querySelector('.r-del').onclick=()=>div.remove();
+  return div;
+}
+function renderRules(list){ const el=$('rules'); el.innerHTML=''; (list||[]).forEach(r=>el.appendChild(ruleRow(r))); }
+function collectRules(){
+  return [...$('rules').querySelectorAll('.rule')].map(d=>({
+    find:d.querySelector('.r-find').value,
+    replace:d.querySelector('.r-rep').value,
+    regex:d.querySelector('.r-rx input').checked,
+  })).filter(r=>r.find.trim());
+}
+async function loadRules(){ renderRules(await (await fetch('/api/rules')).json()); }
+$('addRule').onclick=()=>$('rules').appendChild(ruleRow({find:'',replace:'',regex:false}));
+$('saveRules').onclick=async()=>{
+  const r=await (await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rules:collectRules()})})).json();
+  toast('정규화 규칙 저장됨 ('+r.count+'개)');
+};
+$('resetRules').onclick=async()=>{ renderRules(await (await fetch('/api/rules/default')).json()); toast('기본값 불러옴 — [저장]을 눌러 적용'); };
+$('previewRule').onclick=async()=>{
+  const r=await (await fetch('/api/normalize-preview',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:$('text').value,rules:collectRules()})})).json();
+  $('rulePreview').textContent='미리보기: '+(r.result||'(결과 없음)');
+};
 
 // ---- 합성 ----
 $('synthBtn').onclick=async()=>{
@@ -301,7 +356,8 @@ $('synthBtn').onclick=async()=>{
   $('synthProg').style.display='block'; setBar('synthBar','synthPct',0); $('synthMsg').textContent='합성 시작…';
   try{
     const r=await (await fetch('/api/synthesize',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,sid,speed:+$('speed').value,normalize:$('normalize').checked})})).json();
+      body:JSON.stringify({text,sid,speed:+$('speed').value,normalize:$('normalize').checked,
+        rules:$('normalize').checked?collectRules():null})})).json();
     if(r.error){ throw new Error(r.error); }
     jobId=r.job_id; poll();
   }catch(e){ toast('오류: '+e.message); $('synthBtn').disabled=false; $('synthProg').style.display='none'; }
@@ -362,7 +418,7 @@ $('bcBtn').onclick=async()=>{
 };
 
 // ---- 시작 ----
-loadVoices(); loadDocs(); updateCount(); setInterval(loadDocs,4000);
+loadVoices(); loadDocs(); loadRules(); updateCount(); setInterval(loadDocs,4000);
 </script>
 </body>
 </html>

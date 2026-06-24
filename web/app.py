@@ -1,5 +1,5 @@
 # 재난 방송 TTS 대시보드 - Flask 백엔드 (Supertonic, 오프라인)
-import os, re, wave, threading, uuid
+import os, re, json, wave, threading, uuid
 import numpy as np
 import sherpa_onnx
 from flask import Flask, request, jsonify, send_file, abort
@@ -46,23 +46,52 @@ JOBS = {}   # job_id -> {progress,status,error,wav,duration,sample_rate,peaks}
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
-# ===== 텍스트 정규화(선택) : 재난 안내용 단위/기호 한글화 =====
-UNIT_MAP = [
-    (r"(\d+(?:\.\d+)?)\s*km/h", r"시속 \1킬로미터"),
-    (r"(\d+(?:\.\d+)?)\s*m/s",  r"초속 \1미터"),
-    (r"(\d+(?:\.\d+)?)\s*mm",   r"\1밀리미터"),
-    (r"(\d+(?:\.\d+)?)\s*cm",   r"\1센티미터"),
-    (r"(\d+(?:\.\d+)?)\s*km",   r"\1킬로미터"),
-    (r"(\d+(?:\.\d+)?)\s*kg",   r"\1킬로그램"),
-    (r"℃", "도"), (r"°C", "도"), (r"%", " 퍼센트"),
-    (r"~", " 에서 "), (r"≈", " 약 "),
+# ===== 텍스트 정규화 규칙 (편집 가능, rules.json에 영속) =====
+RULES_FILE = os.path.join(BASE, "rules.json")
+DEFAULT_RULES = [
+    {"find": r"(\d+(?:\.\d+)?)\s*km/h", "replace": r"시속 \1킬로미터", "regex": True},
+    {"find": r"(\d+(?:\.\d+)?)\s*m/s",  "replace": r"초속 \1미터",   "regex": True},
+    {"find": r"(\d+(?:\.\d+)?)\s*mm",   "replace": r"\1밀리미터",     "regex": True},
+    {"find": r"(\d+(?:\.\d+)?)\s*cm",   "replace": r"\1센티미터",     "regex": True},
+    {"find": r"(\d+(?:\.\d+)?)\s*km",   "replace": r"\1킬로미터",     "regex": True},
+    {"find": r"(\d+(?:\.\d+)?)\s*kg",   "replace": r"\1킬로그램",     "regex": True},
+    {"find": "℃",  "replace": "도",      "regex": False},
+    {"find": "°C", "replace": "도",      "regex": False},
+    {"find": "%",  "replace": " 퍼센트", "regex": False},
+    {"find": "~",  "replace": " 에서 ",  "regex": False},
+    {"find": "≈",  "replace": " 약 ",    "regex": False},
 ]
-def normalize_text(text):
+
+def save_rules(rules):
+    with open(RULES_FILE, "w", encoding="utf-8") as f:
+        json.dump(rules, f, ensure_ascii=False, indent=2)
+
+def load_rules():
+    try:
+        with open(RULES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    save_rules(DEFAULT_RULES)
+    return list(DEFAULT_RULES)
+
+RULES = load_rules()
+
+def normalize_text(text, rules=None):
+    rules = rules if rules is not None else RULES
     t = text
-    for pat, rep in UNIT_MAP:
-        t = re.sub(pat, rep, t)
-    t = re.sub(r"[ \t]+", " ", t)
-    return t.strip()
+    for r in rules:
+        find = r.get("find", "")
+        if not find:
+            continue
+        rep = r.get("replace", "")
+        try:
+            t = re.sub(find, rep, t) if r.get("regex") else t.replace(find, rep)
+        except re.error:
+            continue   # 잘못된 정규식은 건너뜀
+    return re.sub(r"[ \t]+", " ", t).strip()
 
 def compute_peaks(samples, n=480):
     if len(samples) == 0:
@@ -148,6 +177,33 @@ def api_document():
     content = open(path, encoding="utf-8-sig", errors="ignore").read()
     return jsonify({"name": os.path.basename(path), "content": content})
 
+@app.route("/api/rules")
+def api_get_rules():
+    return jsonify(RULES)
+
+@app.route("/api/rules/default")
+def api_get_default_rules():
+    return jsonify(DEFAULT_RULES)
+
+@app.route("/api/rules", methods=["POST"])
+def api_set_rules():
+    global RULES
+    data = request.get_json(force=True)
+    clean = []
+    for r in (data.get("rules") or []):
+        find = (r.get("find") or "").strip()
+        if not find:
+            continue
+        clean.append({"find": find, "replace": r.get("replace", ""), "regex": bool(r.get("regex"))})
+    save_rules(clean)
+    RULES = clean
+    return jsonify({"ok": True, "count": len(clean)})
+
+@app.route("/api/normalize-preview", methods=["POST"])
+def api_normalize_preview():
+    data = request.get_json(force=True)
+    return jsonify({"result": normalize_text(data.get("text", ""), data.get("rules"))})
+
 @app.route("/api/synthesize", methods=["POST"])
 def api_synthesize():
     data = request.get_json(force=True)
@@ -157,7 +213,7 @@ def api_synthesize():
     sid = int(data.get("sid", 0))
     speed = float(data.get("speed", 1.0))
     if data.get("normalize"):
-        text = normalize_text(text)
+        text = normalize_text(text, data.get("rules"))
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"progress": 0, "status": "queued"}
     threading.Thread(target=synth_worker, args=(job_id, text, sid, speed), daemon=True).start()
