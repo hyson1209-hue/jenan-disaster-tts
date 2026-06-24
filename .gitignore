@@ -14,6 +14,9 @@ models/
 input/
 output/
 
+# 내부 방송설비 도면 (공개 금지)
+*.pdf
+
 # 운영자 설정(정규화 규칙 - 배포별 상이)
 web/rules.json
 

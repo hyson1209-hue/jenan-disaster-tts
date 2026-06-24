@@ -97,6 +97,14 @@
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0a1018;border:1px solid var(--line);
     padding:12px 20px;border-radius:10px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
   .toast.show{opacity:1}
+  /* 긴급 송출 배너 */
+  .onair{display:none;align-items:center;gap:12px;background:#3a0d0d;border-bottom:2px solid var(--accent);
+    color:#ffd7d7;padding:10px 20px;font-weight:700;font-size:14px}
+  .onair.show{display:flex}
+  .onair .blink{width:12px;height:12px;border-radius:50%;background:var(--accent);animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  .airbox{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .numin{width:48px;background:#0c1220;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px}
 </style>
 </head>
 <body>
@@ -105,6 +113,12 @@
   <span class="badge"><span class="dot"></span><span id="engine">Supertonic · 오프라인</span></span>
   <span class="badge" id="docstat">문서 0건</span>
 </header>
+
+<div class="onair" id="onair">
+  <span class="blink"></span>
+  <span>긴급 오버라이드 송출 중 <span id="onairWhat"></span> — 정규방송 차단됨</span>
+  <button class="btn sm" id="airStop" style="background:#fff;color:#a00;border:none;margin-left:14px">■ 중지</button>
+</div>
 
 <div class="wrap">
   <!-- 좌: 재난 문서 목록 -->
@@ -192,7 +206,10 @@
         </div>
         <div class="actions">
           <a class="btn ghost" id="dlBtn" download>⬇ WAV 다운로드</a>
-          <button class="btn primary" id="bcBtn">📡 송출 확정</button>
+          <span class="airbox"><span class="hint" style="margin:0">반복</span>
+            <input type="number" id="airRepeats" class="numin" min="1" max="10" value="1">회
+            <button class="btn primary" id="airBtn">📡 긴급 송출</button></span>
+          <button class="btn ghost" id="bcBtn">✓ 처리완료</button>
         </div>
       </div>
     </div>
@@ -204,7 +221,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-let voices=[], sid=0, curDoc=null, jobId=null, peaks=[], pollTimer=null;
+let voices=[], sid=0, curDoc=null, jobId=null, peaks=[], pollTimer=null, airSource=null;
 const audio = $('audio');
 
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
@@ -252,8 +269,9 @@ async function loadDocAudio(name){
       peaks=m.peaks||[];
       loadAudio('/api/document-audio-file?name='+encodeURIComponent(name));
       $('audioInfo').textContent='💾 저장된 생성본 · 앵커 '+((m.sid||0)+1)+' · '+(m.created||'');
+      airSource={type:'doc', ref:name, label:name};
     }else{
-      audio.pause(); $('player').classList.remove('show');
+      airSource=null; audio.pause(); $('player').classList.remove('show');
     }
   }catch(e){ audio.pause(); $('player').classList.remove('show'); }
 }
@@ -369,6 +387,7 @@ function poll(){
       setBar('synthBar','synthPct',100); $('synthMsg').textContent='합성 완료 ('+j.duration+'초, '+(j.sample_rate/1000)+'kHz)';
       peaks=j.peaks||[]; loadAudio(j.audio_url); $('synthBtn').disabled=false;
       $('audioInfo').textContent='🆕 방금 생성 · 앵커 '+(sid+1)+(curDoc?' · '+curDoc:'');
+      airSource={type:'job', ref:jobId, label:(curDoc||'방금 생성')};
       setTimeout(()=>$('synthProg').style.display='none',900);
     }else if(j.status==='error'){
       toast('합성 오류: '+j.error); $('synthBtn').disabled=false; $('synthProg').style.display='none';
@@ -414,8 +433,31 @@ $('bcBtn').onclick=async()=>{
   curDoc=null; $('curdoc').textContent=''; loadDocs();
 };
 
+// ---- 긴급 송출(오버라이드) ----
+$('airBtn').onclick=async()=>{
+  if(!airSource){ toast('먼저 음원을 생성/선택하세요'); return; }
+  if(!confirm('긴급 오버라이드 송출을 시작합니다.\n정규방송이 차단되고 이 음원이 송출됩니다. 진행할까요?')) return;
+  const body={repeats:+$('airRepeats').value};
+  if(airSource.type==='job') body.job_id=airSource.ref; else body.name=airSource.ref;
+  body.label=airSource.label;
+  const r=await (await fetch('/api/air',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  if(r.ok){ toast('긴급 송출 시작'); pollAir(); } else { toast('송출 실패: '+(r.error||'')); }
+};
+$('airStop').onclick=async()=>{ await fetch('/api/air/stop',{method:'POST'}); toast('송출 중지 요청'); pollAir(); };
+async function pollAir(){
+  try{
+    const s=await (await fetch('/api/air/status')).json();
+    const on=$('onair');
+    if(s.on_air){
+      on.classList.add('show');
+      $('onairWhat').textContent=(s.what?('· '+s.what):'')+(s.repeats>1?(' · '+s.repeats+'회'):'')+(s.player==='sim'?' [SIM]':'');
+    }else{ on.classList.remove('show'); }
+  }catch(e){}
+}
+
 // ---- 시작 ----
-loadVoices(); loadDocs(); loadRules(); updateCount(); setInterval(loadDocs,4000);
+loadVoices(); loadDocs(); loadRules(); updateCount();
+setInterval(loadDocs,4000); setInterval(pollAir,1500); pollAir();
 </script>
 </body>
 </html>

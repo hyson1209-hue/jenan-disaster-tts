@@ -3,6 +3,7 @@ import os, re, json, wave, shutil, time, threading, uuid
 import numpy as np
 import sherpa_onnx
 from flask import Flask, request, jsonify, send_file, abort
+from broadcast import AirController
 
 # ===== 경로 설정 =====
 BASE        = os.path.dirname(os.path.abspath(__file__))
@@ -310,6 +311,38 @@ def api_document_audio_file():
     if not os.path.exists(wav):
         abort(404)
     return send_file(wav, mimetype="audio/wav")
+
+AIR = AirController()   # 긴급 송출(오버라이드) 제어기
+
+@app.route("/api/air", methods=["POST"])
+def api_air():
+    # 긴급 오버라이드 송출: 절체기 ON → 서버측 재생(N회) → 자동 복귀
+    data = request.get_json(force=True)
+    wav, label = None, ""
+    if data.get("job_id"):
+        j = JOBS.get(data["job_id"])
+        if j and j.get("wav"):
+            wav, label = j["wav"], data.get("label", "방금 생성")
+    elif data.get("name"):
+        p = os.path.join(BROADCAST, doc_slug(data["name"]) + ".wav")
+        if os.path.exists(p):
+            wav, label = p, data["name"]
+    if not wav or not os.path.exists(wav):
+        return jsonify({"ok": False, "error": "송출할 음원이 없습니다"}), 400
+    repeats = max(1, min(10, int(data.get("repeats", 1) or 1)))
+    return jsonify(AIR.air(wav, label=label, repeats=repeats))
+
+@app.route("/api/air/stop", methods=["POST"])
+def api_air_stop():
+    return jsonify(AIR.stop())
+
+@app.route("/api/air/status")
+def api_air_status():
+    return jsonify(AIR.status())
+
+@app.route("/api/asrun")
+def api_asrun():
+    return jsonify(AIR.recent())
 
 @app.route("/api/broadcast", methods=["POST"])
 def api_broadcast():

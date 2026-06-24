@@ -1,3 +1,7 @@
 sherpa-onnx>=1.13.3
 flask>=3.1
 numpy
+
+# 실제 송출 하드웨어 연동용 (시뮬레이션 모드면 불필요)
+pyserial      # USB 릴레이(오버라이드 절체기 트리거)
+sounddevice   # 방송 출력 장치로 서버측 재생
