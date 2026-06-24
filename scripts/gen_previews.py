@@ -10,7 +10,7 @@ os.makedirs(OUTDIR, exist_ok=True)
 
 PREVIEW_TEXT = "지진 발생 안내입니다. 책상 아래로 몸을 피하고 머리를 보호하시기 바랍니다."
 # 대시보드에 노출되는 앵커 sid (web/app.py의 ANCHORS와 일치시킬 것)
-EXPOSED_SIDS = [0, 1, 6, 7]
+EXPOSED_SIDS = [0, 1, 5, 6, 7]
 
 j = lambda f: os.path.join(MODEL, f)
 sup = sherpa_onnx.OfflineTtsSupertonicModelConfig(

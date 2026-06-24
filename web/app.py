@@ -22,6 +22,7 @@ for d in (INPUT_DIR, PROCESSED, OUTPUT_DIR, BROADCAST):
 ANCHORS = [
     {"sid": 0, "name": "앵커 1"},
     {"sid": 1, "name": "앵커 2"},
+    {"sid": 5, "name": "앵커 6"},
     {"sid": 6, "name": "앵커 7"},
     {"sid": 7, "name": "앵커 8"},
 ]
@@ -111,31 +112,60 @@ def compute_peaks(samples, n=480):
     m = max(peaks) or 1.0
     return [round(p / m, 3) for p in peaks]
 
-def synth_worker(job_id, text, sid, speed, source_doc=None):
+def segment_text(text):
+    # 문장(. ! ?)과 호흡(쉼표) 경계로 분할 — 각 조각 뒤에 넣을 간격 종류 표시
+    segs, buf = [], ""
+    for ch in text:
+        buf += ch
+        if ch in ".!?。！？":
+            segs.append((buf.strip(), "sentence")); buf = ""
+        elif ch in ",、":
+            segs.append((buf.strip(), "breath")); buf = ""
+    if buf.strip():
+        segs.append((buf.strip(), ""))
+    return [(t, g) for t, g in segs if t]
+
+def generate_audio(text, sid, speed, sentence_gap, breath_gap, job):
+    # 간격이 모두 0이면 한 번에 생성(프로소디 최상), 아니면 조각별 생성 + 무음 삽입
+    if sentence_gap <= 0 and breath_gap <= 0:
+        def cb(samples, progress):
+            job["progress"] = int(float(progress) * 100); return 1
+        a = TTS.generate(text, sid=sid, speed=speed, callback=cb)
+        return np.asarray(a.samples, dtype=np.float32), a.sample_rate
+    segs = segment_text(text) or [(text, "")]
+    chunks, sr, n = [], TTS.sample_rate, len(segs)
+    for i, (seg, gap) in enumerate(segs):
+        a = TTS.generate(seg, sid=sid, speed=speed)
+        sr = a.sample_rate
+        chunks.append(np.asarray(a.samples, dtype=np.float32))
+        ms = sentence_gap if gap == "sentence" else (breath_gap if gap == "breath" else 0)
+        if ms > 0 and i < n - 1:
+            chunks.append(np.zeros(int(sr * ms / 1000.0), dtype=np.float32))
+        job["progress"] = int((i + 1) / n * 100)
+    return np.concatenate(chunks), sr
+
+def synth_worker(job_id, text, sid, speed, source_doc=None, sentence_gap=0, breath_gap=0):
     job = JOBS[job_id]
     try:
-        def cb(samples, progress):
-            job["progress"] = int(float(progress) * 100)
-            return 1
+        job["status"] = "synthesizing"
         with TTS_LOCK:
-            job["status"] = "synthesizing"
-            audio = TTS.generate(text, sid=sid, speed=speed, callback=cb)
-        samples = np.asarray(audio.samples, dtype=np.float32)
+            samples, sr = generate_audio(text, sid, speed, sentence_gap, breath_gap, job)
         pcm = np.clip(samples * 32767.0, -32768, 32767).astype("<i2")
         wav_path = os.path.join(BROADCAST, f"{job_id}.wav")
         with wave.open(wav_path, "wb") as w:
-            w.setnchannels(1); w.setsampwidth(2); w.setframerate(audio.sample_rate)
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
             w.writeframes(pcm.tobytes())
-        dur = round(len(samples) / audio.sample_rate, 2)
+        dur = round(len(samples) / sr, 2)
         peaks = compute_peaks(samples)
         job.update(status="done", progress=100, wav=wav_path,
-                   duration=dur, sample_rate=audio.sample_rate, peaks=peaks)
+                   duration=dur, sample_rate=sr, peaks=peaks)
         # 원본 문서별 생성본 보존 (문서 재선택 시 다시 표시 + 서버 재시작에도 유지)
         if source_doc:
             slug = doc_slug(source_doc)
             shutil.copyfile(wav_path, os.path.join(BROADCAST, slug + ".wav"))
-            meta = {"peaks": peaks, "duration": dur, "sample_rate": audio.sample_rate,
+            meta = {"peaks": peaks, "duration": dur, "sample_rate": sr,
                     "sid": sid, "speed": speed, "text": text,
+                    "sentence_gap": sentence_gap, "breath_gap": breath_gap,
                     "created": time.strftime("%Y-%m-%d %H:%M:%S")}
             with open(os.path.join(BROADCAST, slug + ".json"), "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False)
@@ -232,12 +262,15 @@ def api_synthesize():
         return jsonify({"error": "빈 텍스트"}), 400
     sid = int(data.get("sid", 0))
     speed = float(data.get("speed", 1.0))
+    sentence_gap = max(0, min(3000, int(data.get("sentence_gap", 0) or 0)))
+    breath_gap = max(0, min(2000, int(data.get("breath_gap", 0) or 0)))
     if data.get("normalize"):
         text = normalize_text(text, data.get("rules"))
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"progress": 0, "status": "queued"}
     threading.Thread(target=synth_worker,
-                     args=(job_id, text, sid, speed, data.get("source_doc")), daemon=True).start()
+                     args=(job_id, text, sid, speed, data.get("source_doc"), sentence_gap, breath_gap),
+                     daemon=True).start()
     return jsonify({"job_id": job_id, "normalized_text": text})
 
 @app.route("/api/progress/<job_id>")

@@ -140,6 +140,16 @@
           <div class="hint">느릴수록 또박또박. 재난 안내는 0.9~1.0 권장.</div>
         </div>
         <div class="opt">
+          <label>문장 간 간격 <span class="val" id="sgapval">0ms</span></label>
+          <input type="range" id="sgap" min="0" max="1500" step="50" value="0">
+          <div class="hint">문장(. ! ?) 사이에 추가할 무음 길이. 올릴수록 또박또박·여유 있게 들립니다. 0이면 기본(자연 낭독).</div>
+        </div>
+        <div class="opt">
+          <label>호흡(쉼표) 간격 <span class="val" id="bgapval">0ms</span></label>
+          <input type="range" id="bgap" min="0" max="800" step="50" value="0">
+          <div class="hint">쉼표(,) 뒤에 넣을 짧은 호흡 쉼. 자연스러운 끊어 읽기에 사용합니다.</div>
+        </div>
+        <div class="opt">
           <label class="switch"><input type="checkbox" id="normalize" checked> 단위·기호 한글 정규화</label>
           <div class="hint">아래 규칙으로 치환해 발음 정확도를 높입니다. 항목을 직접 추가·수정·삭제하세요.</div>
           <div class="rules" id="rules"></div>
@@ -237,6 +247,8 @@ async function loadDocAudio(name){
     const m=await (await fetch('/api/document-audio?name='+encodeURIComponent(name))).json();
     if(m.exists){
       if(typeof m.sid==='number' && voices.some(v=>v.sid===m.sid)) selectSid(m.sid); // 생성에 쓴 앵커 따라가기
+      if(typeof m.sentence_gap==='number'){ $('sgap').value=m.sentence_gap; $('sgapval').textContent=m.sentence_gap+'ms'; }
+      if(typeof m.breath_gap==='number'){ $('bgap').value=m.breath_gap; $('bgapval').textContent=m.breath_gap+'ms'; }
       peaks=m.peaks||[];
       loadAudio('/api/document-audio-file?name='+encodeURIComponent(name));
       $('audioInfo').textContent='💾 저장된 생성본 · 앵커 '+((m.sid||0)+1)+' · '+(m.created||'');
@@ -290,8 +302,10 @@ $('text').oninput=updateCount;
 $('clearBtn').onclick=()=>{ $('text').value=''; curDoc=null; $('curdoc').textContent='';
   audio.pause(); $('player').classList.remove('show'); updateCount(); loadDocs(); };
 
-// ---- 옵션: 말속도 ----
+// ---- 옵션: 말속도 · 간격 ----
 $('speed').oninput=e=>$('speedval').textContent=(+e.target.value).toFixed(2)+'×';
+$('sgap').oninput=e=>$('sgapval').textContent=e.target.value+'ms';
+$('bgap').oninput=e=>$('bgapval').textContent=e.target.value+'ms';
 
 // ---- 옵션: 정규화 규칙 편집 ----
 function ruleRow(r){
@@ -338,7 +352,8 @@ $('synthBtn').onclick=async()=>{
   try{
     const r=await (await fetch('/api/synthesize',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,sid,speed:+$('speed').value,normalize:$('normalize').checked,
-        rules:$('normalize').checked?collectRules():null,source_doc:curDoc})})).json();
+        rules:$('normalize').checked?collectRules():null,source_doc:curDoc,
+        sentence_gap:+$('sgap').value,breath_gap:+$('bgap').value})})).json();
     if(r.error){ throw new Error(r.error); }
     jobId=r.job_id; poll();
   }catch(e){ toast('오류: '+e.message); $('synthBtn').disabled=false; $('synthProg').style.display='none'; }
