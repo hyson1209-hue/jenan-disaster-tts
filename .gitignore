@@ -1,0 +1,29 @@
+# 의존성
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# TTS 모델 (대용량 바이너리 - README의 다운로드 안내 참고)
+models/
+
+# 런타임 데이터 (재난 텍스트 유입/생성 음원)
+input/
+output/
+
+# 로그·임시·캡처
+web/_server.log
+web/_server.err
+web/_*.png
+web/_*.txt
+*.log
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

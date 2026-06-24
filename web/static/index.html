@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>재난 방송 TTS 대시보드</title>
+<style>
+  :root{
+    --bg:#0e141f; --panel:#172033; --panel2:#1f2b42; --line:#2a3a57;
+    --txt:#e7eefb; --muted:#8aa0c4; --accent:#ff5a5f; --accent2:#3aa0ff;
+    --ok:#2ecc71; --bar:#2a3a57;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Malgun Gothic",sans-serif;background:var(--bg);color:var(--txt)}
+  header{display:flex;align-items:center;gap:14px;padding:12px 20px;background:#0a1018;border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  .badge{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:3px 10px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:5px}
+  .wrap{display:grid;grid-template-columns:300px 1fr;gap:16px;padding:16px;max-width:1280px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  /* 문서 목록 */
+  .doclist{display:flex;flex-direction:column;gap:8px;max-height:78vh;overflow:auto}
+  .doc{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer;transition:.15s}
+  .doc:hover{border-color:var(--accent2)}
+  .doc.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .doc .nm{font-size:13px;font-weight:600;word-break:break-all}
+  .doc .sn{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .doc .tm{font-size:11px;color:var(--muted);margin-top:5px}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:30px 0}
+  /* 에디터 */
+  textarea{width:100%;min-height:130px;background:#0c1220;color:var(--txt);border:1px solid var(--line);
+    border-radius:8px;padding:12px;font-size:15px;line-height:1.6;resize:vertical;font-family:inherit}
+  .row{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--muted)}
+  /* 탭 */
+  .tabs{display:flex;gap:6px;margin:14px 0 12px}
+  .tab{padding:8px 16px;border-radius:8px 8px 0 0;background:var(--panel2);border:1px solid var(--line);
+    border-bottom:none;cursor:pointer;font-size:13px;color:var(--muted)}
+  .tab.active{background:var(--panel);color:var(--txt);border-color:var(--accent)}
+  .tabpane{display:none}
+  .tabpane.active{display:block}
+  /* 앵커 그리드 */
+  .anchors{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .anchor{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;transition:.15s}
+  .anchor:hover{border-color:var(--accent2)}
+  .anchor.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:#241a25}
+  .anchor .av{width:38px;height:38px;border-radius:50%;margin:0 auto 8px;background:linear-gradient(135deg,#3aa0ff,#ff5a5f);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+  .anchor .an{font-size:12px;font-weight:600}
+  .anchor.playing{border-color:var(--accent2);box-shadow:0 0 0 1px var(--accent2)}
+  .anchor.playing .av{animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.45}}
+  .pvbtns{display:flex;gap:6px;margin-top:8px;justify-content:center}
+  .pbtn{flex:1;border:1px solid var(--line);background:#0c1220;color:var(--txt);border-radius:6px;padding:5px 0;font-size:12px;cursor:pointer}
+  .pbtn.play:hover{border-color:var(--ok);color:var(--ok)}
+  .pbtn.stop:hover{border-color:var(--accent);color:var(--accent)}
+  .anchorbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px}
+  .btn.sm{padding:7px 13px;font-size:12px;font-weight:600}
+  /* 앵커 선택 모달 */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal.show{display:flex}
+  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;max-width:780px;width:100%;max-height:88vh;overflow:auto}
+  .modalhd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .modalhd h2{margin:0;font-size:16px;color:var(--txt);text-transform:none;letter-spacing:0}
+  .xbtn{background:transparent;border:1px solid var(--line);color:var(--txt);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:14px}
+  .xbtn:hover{border-color:var(--accent)}
+  .anchors.big{grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 6px}
+  .anchors.big .av{width:46px;height:46px;font-size:17px}
+  /* 옵션 */
+  .opt{margin-bottom:16px}
+  .opt label{display:block;font-size:13px;margin-bottom:6px}
+  .opt .val{color:var(--accent2);font-weight:600}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .switch{display:flex;align-items:center;gap:10px;font-size:13px}
+  .switch input{width:18px;height:18px;accent-color:var(--accent)}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5}
+  /* 버튼 */
+  .btn{border:none;border-radius:9px;padding:12px 18px;font-size:14px;font-weight:700;cursor:pointer;color:#fff}
+  .btn.primary{background:var(--accent)}
+  .btn.primary:hover{background:#ff3b41}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  .btn.ghost:hover{border-color:var(--accent2)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  /* 진행바 */
+  .progress{height:10px;background:var(--bar);border-radius:6px;overflow:hidden;margin-top:6px}
+  .progress > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .1s}
+  .plabel{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:8px}
+  /* 플레이어 */
+  .player{margin-top:16px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;display:none}
+  .player.show{display:block}
+  canvas{width:100%;height:90px;display:block;background:#0c1220;border-radius:8px;cursor:pointer}
+  .pctl{display:flex;align-items:center;gap:14px;margin-top:12px}
+  .playbtn{width:46px;height:46px;border-radius:50%;background:var(--accent);border:none;color:#fff;font-size:18px;cursor:pointer;flex:none}
+  .time{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted)}
+  .pbarwrap{flex:1}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0a1018;border:1px solid var(--line);
+    padding:12px 20px;border-radius:10px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>📻 재난 방송 TTS 대시보드</h1>
+  <span class="badge"><span class="dot"></span><span id="engine">Supertonic · 오프라인</span></span>
+  <span class="badge" id="docstat">문서 0건</span>
+</header>
+
+<div class="wrap">
+  <!-- 좌: 재난 문서 목록 -->
+  <div class="card">
+    <h2>재난 문서 (input)</h2>
+    <div class="doclist" id="doclist"><div class="empty">불러오는 중…</div></div>
+  </div>
+
+  <!-- 우: 작업 영역 -->
+  <div>
+    <div class="card">
+      <h2>텍스트 내용 <span id="curdoc" style="color:var(--accent2)"></span></h2>
+      <textarea id="text" placeholder="좌측에서 재난 문서를 선택하거나 여기에 직접 입력하세요…"></textarea>
+      <div class="row"><span id="charcount">0 자</span><span id="estlen"></span></div>
+
+      <div class="tabs">
+        <div class="tab active" data-tab="anchor">🎙 앵커 선택</div>
+        <div class="tab" data-tab="option">⚙ 옵션</div>
+      </div>
+
+      <div class="tabpane active" id="pane-anchor">
+        <div class="anchorbar">
+          <span class="hint" id="selname" style="margin:0">선택: 앵커 1</span>
+          <button class="btn ghost sm" id="openAnchors">🗗 앵커 선택 창 열기</button>
+        </div>
+        <div class="anchors" id="anchors"></div>
+        <div class="hint">카드 클릭 = 선택 · ▶ 재생 / ⏹ 정지로 미리듣기 (화자 10명)</div>
+      </div>
+
+      <div class="tabpane" id="pane-option">
+        <div class="opt">
+          <label>말속도 <span class="val" id="speedval">1.00×</span></label>
+          <input type="range" id="speed" min="0.5" max="1.6" step="0.05" value="1.0">
+          <div class="hint">느릴수록 또박또박. 재난 안내는 0.9~1.0 권장.</div>
+        </div>
+        <div class="opt">
+          <label class="switch"><input type="checkbox" id="normalize" checked> 단위·기호 한글 정규화</label>
+          <div class="hint">예: ℃→도, %→퍼센트, m/s→초속 미터, ~→에서. 발음 정확도를 높입니다.</div>
+        </div>
+        <div class="opt">
+          <label>출력 포맷</label>
+          <div class="hint">WAV · 44.1kHz · 모노 (방송 장비 호환). 생성 후 다운로드 가능합니다.</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="synthBtn">▶ 음성 생성</button>
+        <button class="btn ghost" id="clearBtn">지우기</button>
+      </div>
+
+      <div id="synthProg" style="display:none">
+        <div class="progress"><i id="synthBar"></i></div>
+        <div class="plabel"><span id="synthMsg">합성 준비…</span><span id="synthPct">0%</span></div>
+      </div>
+
+      <!-- 플레이어 -->
+      <div class="player" id="player">
+        <canvas id="wave" height="90"></canvas>
+        <div class="pctl">
+          <button class="playbtn" id="playBtn">▶</button>
+          <div class="pbarwrap">
+            <div class="progress"><i id="playBar"></i></div>
+            <div class="plabel"><span class="time" id="curtime">0:00</span><span class="time" id="durtime">0:00</span></div>
+          </div>
+          <span class="time" id="playPct">0%</span>
+        </div>
+        <div class="actions">
+          <a class="btn ghost" id="dlBtn" download>⬇ WAV 다운로드</a>
+          <button class="btn primary" id="bcBtn">📡 송출 확정</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 앵커 선택 창(따로 열기) -->
+<div class="modal" id="anchorModal">
+  <div class="modalbox">
+    <div class="modalhd">
+      <h2>🎙 앵커 선택 · 미리듣기</h2>
+      <button class="xbtn" id="closeAnchors">✕</button>
+    </div>
+    <div class="hint">▶ 재생 / ⏹ 정지로 들어보고, 카드를 클릭해 선택하세요. 선택은 즉시 적용됩니다.</div>
+    <div class="anchors big" id="anchorsModal"></div>
+    <div style="text-align:right;margin-top:10px">
+      <button class="btn primary sm" id="doneAnchors">선택 완료</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<audio id="audio"></audio>
+
+<script>
+const $ = id => document.getElementById(id);
+let voices=[], sid=0, curDoc=null, jobId=null, peaks=[], pollTimer=null;
+const audio = $('audio');
+
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function fmt(s){ s=Math.max(0,s||0); const m=Math.floor(s/60), x=Math.floor(s%60); return m+':'+String(x).padStart(2,'0'); }
+
+// ---- 탭 ----
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); $('pane-'+t.dataset.tab).classList.add('active');
+});
+
+// ---- 문서 목록 ----
+async function loadDocs(){
+  try{
+    const docs = await (await fetch('/api/documents')).json();
+    $('docstat').textContent = `문서 ${docs.length}건`;
+    const el = $('doclist');
+    if(!docs.length){ el.innerHTML='<div class="empty">input 폴더에 문서가 없습니다.</div>'; return; }
+    el.innerHTML='';
+    docs.forEach(d=>{
+      const div=document.createElement('div');
+      div.className='doc'+(d.name===curDoc?' active':'');
+      const t=new Date(d.mtime*1000);
+      div.innerHTML=`<div class="nm">${d.name}</div><div class="sn">${d.snippet||'(빈 문서)'}</div>
+        <div class="tm">${t.toLocaleString('ko-KR')} · ${d.size}B</div>`;
+      div.onclick=()=>selectDoc(d.name);
+      el.appendChild(div);
+    });
+  }catch(e){}
+}
+async function selectDoc(name){
+  const d = await (await fetch('/api/document?name='+encodeURIComponent(name))).json();
+  curDoc=name; $('curdoc').textContent='· '+name; $('text').value=d.content;
+  updateCount(); loadDocs();
+}
+
+// ---- 앵커 ----
+const previewAudio = new Audio();
+let playingSid = null;
+previewAudio.onended = ()=>{ playingSid=null; renderAnchors(); };
+
+async function loadVoices(){
+  voices = await (await fetch('/api/voices')).json();
+  renderAnchors();
+}
+function anchorCard(v){
+  const div=document.createElement('div');
+  div.className='anchor'+(v.sid===sid?' sel':'')+(v.sid===playingSid?' playing':'');
+  div.innerHTML=`<div class="av">${v.sid+1}</div><div class="an">${v.name}</div>
+    <div class="pvbtns">
+      <button class="pbtn play" title="재생">▶</button>
+      <button class="pbtn stop" title="정지">⏹</button>
+    </div>`;
+  div.querySelector('.play').onclick=(e)=>{ e.stopPropagation(); playPreview(v.sid); };
+  div.querySelector('.stop').onclick=(e)=>{ e.stopPropagation(); stopPreview(); };
+  div.onclick=()=>selectSid(v.sid);
+  return div;
+}
+function renderAnchors(){
+  ['anchors','anchorsModal'].forEach(id=>{
+    const el=$(id); if(!el) return;
+    el.innerHTML=''; voices.forEach(v=>el.appendChild(anchorCard(v)));
+  });
+  const cur=voices.find(v=>v.sid===sid);
+  if(cur) $('selname').textContent='선택: '+cur.name;
+}
+function selectSid(s){ sid=s; renderAnchors(); }
+function playPreview(s){
+  previewAudio.src='/api/voice-preview/'+s; previewAudio.currentTime=0; previewAudio.play();
+  playingSid=s; renderAnchors(); toast('앵커 '+(s+1)+' 재생');
+}
+function stopPreview(){ previewAudio.pause(); previewAudio.currentTime=0; playingSid=null; renderAnchors(); }
+
+// 앵커 선택 창(모달)
+function closeModal(){ stopPreview(); $('anchorModal').classList.remove('show'); }
+$('openAnchors').onclick=()=>$('anchorModal').classList.add('show');
+$('closeAnchors').onclick=closeModal;
+$('doneAnchors').onclick=closeModal;
+$('anchorModal').onclick=(e)=>{ if(e.target.id==='anchorModal') closeModal(); };
+
+// ---- 입력 글자수 ----
+function updateCount(){
+  const n=$('text').value.length; $('charcount').textContent=n+' 자';
+  $('estlen').textContent = n? '예상 길이 약 '+Math.round(n/4.2)+'초':'';
+}
+$('text').oninput=updateCount;
+$('clearBtn').onclick=()=>{ $('text').value=''; curDoc=null; $('curdoc').textContent=''; updateCount(); loadDocs(); };
+
+// ---- 옵션 ----
+$('speed').oninput=e=>$('speedval').textContent=(+e.target.value).toFixed(2)+'×';
+
+// ---- 합성 ----
+$('synthBtn').onclick=async()=>{
+  const text=$('text').value.trim();
+  if(!text){ toast('텍스트가 비어 있습니다'); return; }
+  $('synthBtn').disabled=true; $('player').classList.remove('show');
+  $('synthProg').style.display='block'; setBar('synthBar','synthPct',0); $('synthMsg').textContent='합성 시작…';
+  try{
+    const r=await (await fetch('/api/synthesize',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text,sid,speed:+$('speed').value,normalize:$('normalize').checked})})).json();
+    if(r.error){ throw new Error(r.error); }
+    jobId=r.job_id; poll();
+  }catch(e){ toast('오류: '+e.message); $('synthBtn').disabled=false; $('synthProg').style.display='none'; }
+};
+function setBar(bar,pct,v){ $(bar).style.width=v+'%'; if(pct)$(pct).textContent=v+'%'; }
+function poll(){
+  clearTimeout(pollTimer);
+  pollTimer=setTimeout(async()=>{
+    const j=await (await fetch('/api/progress/'+jobId)).json();
+    if(j.status==='synthesizing'||j.status==='queued'){
+      $('synthMsg').textContent='신경망 음성 합성 중…'; setBar('synthBar','synthPct',j.progress||0); poll();
+    }else if(j.status==='done'){
+      setBar('synthBar','synthPct',100); $('synthMsg').textContent='합성 완료 ('+j.duration+'초, '+(j.sample_rate/1000)+'kHz)';
+      peaks=j.peaks||[]; loadAudio(j.audio_url); $('synthBtn').disabled=false;
+      setTimeout(()=>$('synthProg').style.display='none',900);
+    }else if(j.status==='error'){
+      toast('합성 오류: '+j.error); $('synthBtn').disabled=false; $('synthProg').style.display='none';
+    }
+  },120);
+}
+
+// ---- 플레이어 / 파형 ----
+const cv=$('wave'); const ctx=cv.getContext('2d');
+function sizeCanvas(){ cv.width=cv.clientWidth; }
+function drawWave(played){
+  const W=cv.width,H=cv.height; ctx.clearRect(0,0,W,H);
+  if(!peaks.length) return;
+  const bw=W/peaks.length;
+  for(let i=0;i<peaks.length;i++){
+    const h=Math.max(2,peaks[i]*H*0.92), x=i*bw, y=(H-h)/2;
+    ctx.fillStyle=(i/peaks.length<played)?'#ff5a5f':'#3a4a63';
+    ctx.fillRect(x,y,Math.max(1,bw-1),h);
+  }
+}
+function loadAudio(url){
+  $('player').classList.add('show');
+  audio.src=url; $('dlBtn').href=url; $('dlBtn').setAttribute('download',(curDoc||'broadcast').replace(/\.txt$/,'')+'.wav');
+  sizeCanvas(); drawWave(0); $('playBtn').textContent='▶';
+  setBar('playBar','playPct',0); $('curtime').textContent='0:00';
+}
+audio.onloadedmetadata=()=>$('durtime').textContent=fmt(audio.duration);
+audio.ontimeupdate=()=>{
+  const p=audio.currentTime/(audio.duration||1);
+  drawWave(p); setBar('playBar','playPct',Math.round(p*100));
+  $('curtime').textContent=fmt(audio.currentTime);
+};
+audio.onended=()=>{ $('playBtn').textContent='▶'; drawWave(1); };
+$('playBtn').onclick=()=>{ if(audio.paused){audio.play();$('playBtn').textContent='⏸';}else{audio.pause();$('playBtn').textContent='▶';} };
+cv.onclick=e=>{ const r=cv.getBoundingClientRect(); audio.currentTime=((e.clientX-r.left)/r.width)*(audio.duration||0); };
+window.onresize=()=>{ sizeCanvas(); drawWave(audio.currentTime/(audio.duration||1)); };
+
+// ---- 송출 확정 ----
+$('bcBtn').onclick=async()=>{
+  const r=await (await fetch('/api/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({source_doc:curDoc})})).json();
+  toast(r.moved? '송출 확정 · '+r.moved+' 처리완료로 이동':'송출 확정 (원본 없음)');
+  curDoc=null; $('curdoc').textContent=''; loadDocs();
+};
+
+// ---- 시작 ----
+loadVoices(); loadDocs(); updateCount(); setInterval(loadDocs,4000);
+</script>
+</body>
+</html>
