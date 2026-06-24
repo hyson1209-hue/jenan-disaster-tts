@@ -1,5 +1,5 @@
 # 재난 방송 TTS 대시보드 - Flask 백엔드 (Supertonic, 오프라인)
-import os, re, json, wave, threading, uuid
+import os, re, json, wave, shutil, time, threading, uuid
 import numpy as np
 import sherpa_onnx
 from flask import Flask, request, jsonify, send_file, abort
@@ -98,6 +98,11 @@ def normalize_text(text, rules=None):
             continue   # 잘못된 정규식은 건너뜀
     return re.sub(r"[ \t]+", " ", t).strip()
 
+def doc_slug(name):
+    # 문서명 -> 파일시스템 안전한 슬러그 (문서별 생성본 저장용)
+    base = os.path.splitext(os.path.basename(name or ""))[0]
+    return re.sub(r'[\\/:*?"<>|]', "_", base) or "untitled"
+
 def compute_peaks(samples, n=480):
     if len(samples) == 0:
         return []
@@ -106,7 +111,7 @@ def compute_peaks(samples, n=480):
     m = max(peaks) or 1.0
     return [round(p / m, 3) for p in peaks]
 
-def synth_worker(job_id, text, sid, speed):
+def synth_worker(job_id, text, sid, speed, source_doc=None):
     job = JOBS[job_id]
     try:
         def cb(samples, progress):
@@ -121,9 +126,19 @@ def synth_worker(job_id, text, sid, speed):
         with wave.open(wav_path, "wb") as w:
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(audio.sample_rate)
             w.writeframes(pcm.tobytes())
+        dur = round(len(samples) / audio.sample_rate, 2)
+        peaks = compute_peaks(samples)
         job.update(status="done", progress=100, wav=wav_path,
-                   duration=round(len(samples) / audio.sample_rate, 2),
-                   sample_rate=audio.sample_rate, peaks=compute_peaks(samples))
+                   duration=dur, sample_rate=audio.sample_rate, peaks=peaks)
+        # 원본 문서별 생성본 보존 (문서 재선택 시 다시 표시 + 서버 재시작에도 유지)
+        if source_doc:
+            slug = doc_slug(source_doc)
+            shutil.copyfile(wav_path, os.path.join(BROADCAST, slug + ".wav"))
+            meta = {"peaks": peaks, "duration": dur, "sample_rate": audio.sample_rate,
+                    "sid": sid, "speed": speed, "text": text,
+                    "created": time.strftime("%Y-%m-%d %H:%M:%S")}
+            with open(os.path.join(BROADCAST, slug + ".json"), "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False)
     except Exception as e:
         job.update(status="error", error=str(e))
 
@@ -221,7 +236,8 @@ def api_synthesize():
         text = normalize_text(text, data.get("rules"))
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"progress": 0, "status": "queued"}
-    threading.Thread(target=synth_worker, args=(job_id, text, sid, speed), daemon=True).start()
+    threading.Thread(target=synth_worker,
+                     args=(job_id, text, sid, speed, data.get("source_doc")), daemon=True).start()
     return jsonify({"job_id": job_id, "normalized_text": text})
 
 @app.route("/api/progress/<job_id>")
@@ -240,6 +256,27 @@ def api_audio(job_id):
     if not job or job.get("status") != "done":
         abort(404)
     return send_file(job["wav"], mimetype="audio/wav")
+
+@app.route("/api/document-audio")
+def api_document_audio():
+    # 문서에 대해 이전에 생성한 음성이 있으면 메타데이터 반환
+    slug = doc_slug(request.args.get("name", ""))
+    wav = os.path.join(BROADCAST, slug + ".wav")
+    meta = os.path.join(BROADCAST, slug + ".json")
+    if not (os.path.exists(wav) and os.path.exists(meta)):
+        return jsonify({"exists": False})
+    with open(meta, encoding="utf-8") as f:
+        m = json.load(f)
+    m["exists"] = True
+    return jsonify(m)
+
+@app.route("/api/document-audio-file")
+def api_document_audio_file():
+    slug = doc_slug(request.args.get("name", ""))
+    wav = os.path.join(BROADCAST, slug + ".wav")
+    if not os.path.exists(wav):
+        abort(404)
+    return send_file(wav, mimetype="audio/wav")
 
 @app.route("/api/broadcast", methods=["POST"])
 def api_broadcast():

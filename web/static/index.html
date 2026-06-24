@@ -56,16 +56,6 @@
   .pbtn.stop:hover{border-color:var(--accent);color:var(--accent)}
   .anchorbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px}
   .btn.sm{padding:7px 13px;font-size:12px;font-weight:600}
-  /* 앵커 선택 모달 */
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
-  .modal.show{display:flex}
-  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;max-width:780px;width:100%;max-height:88vh;overflow:auto}
-  .modalhd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-  .modalhd h2{margin:0;font-size:16px;color:var(--txt);text-transform:none;letter-spacing:0}
-  .xbtn{background:transparent;border:1px solid var(--line);color:var(--txt);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:14px}
-  .xbtn:hover{border-color:var(--accent)}
-  .anchors.big{grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 6px}
-  .anchors.big .av{width:46px;height:46px;font-size:17px}
   /* 옵션 */
   .opt{margin-bottom:16px}
   .opt label{display:block;font-size:13px;margin-bottom:6px}
@@ -138,7 +128,6 @@
       <div class="tabpane active" id="pane-anchor">
         <div class="anchorbar">
           <span class="hint" id="selname" style="margin:0">선택: 앵커 1</span>
-          <button class="btn ghost sm" id="openAnchors">🗗 앵커 선택 창 열기</button>
         </div>
         <div class="anchors" id="anchors"></div>
         <div class="hint">카드 클릭 = 선택 · ▶ 재생 / ⏹ 정지로 미리듣기</div>
@@ -181,6 +170,7 @@
 
       <!-- 플레이어 -->
       <div class="player" id="player">
+        <div class="hint" id="audioInfo" style="margin:0 0 8px"></div>
         <canvas id="wave" height="90"></canvas>
         <div class="pctl">
           <button class="playbtn" id="playBtn">▶</button>
@@ -195,21 +185,6 @@
           <button class="btn primary" id="bcBtn">📡 송출 확정</button>
         </div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- 앵커 선택 창(따로 열기) -->
-<div class="modal" id="anchorModal">
-  <div class="modalbox">
-    <div class="modalhd">
-      <h2>🎙 앵커 선택 · 미리듣기</h2>
-      <button class="xbtn" id="closeAnchors">✕</button>
-    </div>
-    <div class="hint">▶ 재생 / ⏹ 정지로 들어보고, 카드를 클릭해 선택하세요. 선택은 즉시 적용됩니다.</div>
-    <div class="anchors big" id="anchorsModal"></div>
-    <div style="text-align:right;margin-top:10px">
-      <button class="btn primary sm" id="doneAnchors">선택 완료</button>
     </div>
   </div>
 </div>
@@ -254,7 +229,21 @@ async function loadDocs(){
 async function selectDoc(name){
   const d = await (await fetch('/api/document?name='+encodeURIComponent(name))).json();
   curDoc=name; $('curdoc').textContent='· '+name; $('text').value=d.content;
-  updateCount(); loadDocs();
+  updateCount(); loadDocs(); loadDocAudio(name);
+}
+// 문서에 저장된 생성본이 있으면 플레이어에 표시
+async function loadDocAudio(name){
+  try{
+    const m=await (await fetch('/api/document-audio?name='+encodeURIComponent(name))).json();
+    if(m.exists){
+      if(typeof m.sid==='number' && voices.some(v=>v.sid===m.sid)) selectSid(m.sid); // 생성에 쓴 앵커 따라가기
+      peaks=m.peaks||[];
+      loadAudio('/api/document-audio-file?name='+encodeURIComponent(name));
+      $('audioInfo').textContent='💾 저장된 생성본 · 앵커 '+((m.sid||0)+1)+' · '+(m.created||'');
+    }else{
+      audio.pause(); $('player').classList.remove('show');
+    }
+  }catch(e){ audio.pause(); $('player').classList.remove('show'); }
 }
 
 // ---- 앵커 ----
@@ -280,10 +269,8 @@ function anchorCard(v){
   return div;
 }
 function renderAnchors(){
-  ['anchors','anchorsModal'].forEach(id=>{
-    const el=$(id); if(!el) return;
-    el.innerHTML=''; voices.forEach(v=>el.appendChild(anchorCard(v)));
-  });
+  const el=$('anchors'); el.innerHTML='';
+  voices.forEach(v=>el.appendChild(anchorCard(v)));
   const cur=voices.find(v=>v.sid===sid);
   if(cur) $('selname').textContent='선택: '+cur.name;
 }
@@ -294,20 +281,14 @@ function playPreview(s){
 }
 function stopPreview(){ previewAudio.pause(); previewAudio.currentTime=0; playingSid=null; renderAnchors(); }
 
-// 앵커 선택 창(모달)
-function closeModal(){ stopPreview(); $('anchorModal').classList.remove('show'); }
-$('openAnchors').onclick=()=>$('anchorModal').classList.add('show');
-$('closeAnchors').onclick=closeModal;
-$('doneAnchors').onclick=closeModal;
-$('anchorModal').onclick=(e)=>{ if(e.target.id==='anchorModal') closeModal(); };
-
 // ---- 입력 글자수 ----
 function updateCount(){
   const n=$('text').value.length; $('charcount').textContent=n+' 자';
   $('estlen').textContent = n? '예상 길이 약 '+Math.round(n/4.2)+'초':'';
 }
 $('text').oninput=updateCount;
-$('clearBtn').onclick=()=>{ $('text').value=''; curDoc=null; $('curdoc').textContent=''; updateCount(); loadDocs(); };
+$('clearBtn').onclick=()=>{ $('text').value=''; curDoc=null; $('curdoc').textContent='';
+  audio.pause(); $('player').classList.remove('show'); updateCount(); loadDocs(); };
 
 // ---- 옵션: 말속도 ----
 $('speed').oninput=e=>$('speedval').textContent=(+e.target.value).toFixed(2)+'×';
@@ -357,7 +338,7 @@ $('synthBtn').onclick=async()=>{
   try{
     const r=await (await fetch('/api/synthesize',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,sid,speed:+$('speed').value,normalize:$('normalize').checked,
-        rules:$('normalize').checked?collectRules():null})})).json();
+        rules:$('normalize').checked?collectRules():null,source_doc:curDoc})})).json();
     if(r.error){ throw new Error(r.error); }
     jobId=r.job_id; poll();
   }catch(e){ toast('오류: '+e.message); $('synthBtn').disabled=false; $('synthProg').style.display='none'; }
@@ -372,6 +353,7 @@ function poll(){
     }else if(j.status==='done'){
       setBar('synthBar','synthPct',100); $('synthMsg').textContent='합성 완료 ('+j.duration+'초, '+(j.sample_rate/1000)+'kHz)';
       peaks=j.peaks||[]; loadAudio(j.audio_url); $('synthBtn').disabled=false;
+      $('audioInfo').textContent='🆕 방금 생성 · 앵커 '+(sid+1)+(curDoc?' · '+curDoc:'');
       setTimeout(()=>$('synthProg').style.display='none',900);
     }else if(j.status==='error'){
       toast('합성 오류: '+j.error); $('synthBtn').disabled=false; $('synthProg').style.display='none';
