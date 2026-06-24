@@ -17,9 +17,14 @@ MODEL_DIR   = os.path.join(PROJECT, "models", "sherpa-onnx-supertonic-3-tts-int8
 for d in (INPUT_DIR, PROCESSED, OUTPUT_DIR, BROADCAST):
     os.makedirs(d, exist_ok=True)
 
-# 앵커(화자) 표시명 - sid 0~9
-ANCHOR_NAMES = ["앵커 1", "앵커 2", "앵커 3", "앵커 4", "앵커 5",
-                "앵커 6", "앵커 7", "앵커 8", "앵커 9", "앵커 10"]
+# 노출할 앵커(화자) - sid와 표시명. 이 목록만 대시보드에 표시된다.
+# (음색은 Supertonic 모델의 화자 sid에 종속 — 목록에서 빼면 대시보드에서만 숨겨짐)
+ANCHORS = [
+    {"sid": 0, "name": "앵커 1"},
+    {"sid": 1, "name": "앵커 2"},
+    {"sid": 6, "name": "앵커 7"},
+    {"sid": 7, "name": "앵커 8"},
+]
 
 # ===== Supertonic 모델 1회 로드 =====
 def build_tts():
@@ -130,10 +135,10 @@ def index():
 @app.route("/api/voices")
 def api_voices():
     out = []
-    for sid in range(NUM_SPEAKERS):
-        name = ANCHOR_NAMES[sid] if sid < len(ANCHOR_NAMES) else f"앵커 {sid+1}"
+    for a in ANCHORS:
+        sid = a["sid"]
         preview = os.path.join(PREVIEW_DIR, f"supertonic_sid{sid:02d}.wav")
-        out.append({"sid": sid, "name": name, "has_preview": os.path.exists(preview)})
+        out.append({"sid": sid, "name": a["name"], "has_preview": os.path.exists(preview)})
     return jsonify(out)
 
 @app.route("/api/voice-preview/<int:sid>")

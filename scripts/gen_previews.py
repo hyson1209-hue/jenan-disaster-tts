@@ -9,6 +9,8 @@ OUTDIR = os.path.join(ROOT, "output", "voices")
 os.makedirs(OUTDIR, exist_ok=True)
 
 PREVIEW_TEXT = "지진 발생 안내입니다. 책상 아래로 몸을 피하고 머리를 보호하시기 바랍니다."
+# 대시보드에 노출되는 앵커 sid (web/app.py의 ANCHORS와 일치시킬 것)
+EXPOSED_SIDS = [0, 1, 6, 7]
 
 j = lambda f: os.path.join(MODEL, f)
 sup = sherpa_onnx.OfflineTtsSupertonicModelConfig(
@@ -23,7 +25,7 @@ sup = sherpa_onnx.OfflineTtsSupertonicModelConfig(
 model = sherpa_onnx.OfflineTtsModelConfig(supertonic=sup, num_threads=4)
 tts = sherpa_onnx.OfflineTts(sherpa_onnx.OfflineTtsConfig(model=model))
 
-for sid in range(tts.num_speakers):
+for sid in EXPOSED_SIDS:
     a = tts.generate(PREVIEW_TEXT, sid=sid, speed=1.0)
     pcm = array.array("h", (max(-32768, min(32767, int(s * 32767))) for s in a.samples))
     out = os.path.join(OUTDIR, f"supertonic_sid{sid:02d}.wav")
@@ -31,4 +33,4 @@ for sid in range(tts.num_speakers):
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(a.sample_rate)
         w.writeframes(pcm.tobytes())
     print(f"sid{sid:02d} -> {out}")
-print(f"완료: {tts.num_speakers}개 앵커 프리뷰")
+print(f"완료: {len(EXPOSED_SIDS)}개 앵커 프리뷰")
